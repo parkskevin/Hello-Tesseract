@@ -1,0 +1,3 @@
+[submodule "libs/tess-two"]
+	path = libs/tess-two
+	url = https://github.com/parkskevin/tess-two.git
