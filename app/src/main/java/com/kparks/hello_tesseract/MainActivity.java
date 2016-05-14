@@ -3,6 +3,7 @@ package com.kparks.hello_tesseract;
 import android.content.Intent;
 import android.database.Cursor;
 import android.graphics.Bitmap;
+import android.graphics.BitmapFactory;
 import android.media.ExifInterface;
 import android.net.Uri;
 import android.os.Bundle;
@@ -26,6 +27,9 @@ import com.googlecode.leptonica.android.WriteFile;
 import com.googlecode.tesseract.android.TessBaseAPI;
 
 import java.io.File;
+import java.io.FileInputStream;
+import java.io.FileNotFoundException;
+import java.io.FileOutputStream;
 import java.io.IOException;
 import java.text.SimpleDateFormat;
 import java.util.Date;
@@ -34,6 +38,8 @@ import java.util.Locale;
 
 public class MainActivity extends AppCompatActivity {
     public static final String TAG = MainActivity.class.getSimpleName();
+    public static final String PREFIX = "HELLOTESS";
+    public static final String EXTENSION = ".PNG";
     public static final int TAKE_PHOTO_REQUEST = 0;
     public static final int PICK_PHOTO_REQUEST = 1;
     public static final int MEDIA_TYPE_IMAGE = 1;
@@ -41,7 +47,9 @@ public class MainActivity extends AppCompatActivity {
     protected Button mCaptureButton;
     protected Button mGalleryButton;
     protected ImageView mThumbnail;
+    protected Pix mPix;
     protected int mOrientation;
+    protected int mRequestType;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -52,8 +60,9 @@ public class MainActivity extends AppCompatActivity {
         mCaptureButton = (Button) findViewById(R.id.button_captureImage);
         mGalleryButton = (Button) findViewById(R.id.button_galleryImage);
         mThumbnail = (ImageView) findViewById(R.id.imageView_thumbnail);
-        //TODO: anything actually to do with TessBaseAPI, this serves as a hint it's there
-        TessBaseAPI tessBaseAPI = new TessBaseAPI();
+        mPix = null;
+        mOrientation = -1;
+        mRequestType = -1;
 
         mCaptureButton.setOnClickListener(new View.OnClickListener() {
             @Override
@@ -84,13 +93,17 @@ public class MainActivity extends AppCompatActivity {
                 startActivityForResult(galleryPhotoIntent, PICK_PHOTO_REQUEST);
             }
         });
+
+        //TODO: anything actually to do with TessBaseAPI, this serves as a hint it's there
+        TessBaseAPI tessBaseAPI = new TessBaseAPI();
     }
 
     @Override
     protected void onActivityResult(int requestCode, int resultCode, Intent intent) {
         super.onActivityResult(requestCode, resultCode, intent);
         if (resultCode == RESULT_OK) {
-            if (requestCode == PICK_PHOTO_REQUEST) {
+            mRequestType = requestCode;
+            if (mRequestType == PICK_PHOTO_REQUEST) {
                 if (intent == null) {
                     Toast.makeText(this, "An error has occurred. Try again.", Toast.LENGTH_LONG).show();
                     return;
@@ -105,19 +118,18 @@ public class MainActivity extends AppCompatActivity {
             }
             //Get the proper orientation of the image
             try {
-                mOrientation = getImageOrientation(PICK_PHOTO_REQUEST, mMediaUri);
+                mOrientation = getImageOrientation(mRequestType, mMediaUri);
             } catch (IOException e) {
                 Log.e(TAG, "Get orientation error!");
                 e.printStackTrace();
             }
 
             //Show the image using leptonica
-            Pix mPix = null;
             try {
                 Bitmap bitmap = MediaStore.Images.Media.getBitmap(this.getContentResolver(), mMediaUri);
                 mPix = ReadFile.readBitmap(bitmap);
                 if (mPix == null) {
-                    Toast.makeText(this, "Error: mPix is null.", Toast.LENGTH_LONG).show();
+                    Toast.makeText(this, "Error: Pix is null.", Toast.LENGTH_LONG).show();
                     return;
                 } else {
                     mPix = Rotate.rotate(mPix, mOrientation);
@@ -235,6 +247,57 @@ public class MainActivity extends AppCompatActivity {
         }
         else {
             return false;
+        }
+    }
+
+    @Override
+    public void onSaveInstanceState(Bundle savedInstanceState) {
+        if(mPix != null) {
+            File outputDir = this.getCacheDir();
+            try {
+                File tempFile = File.createTempFile(PREFIX, EXTENSION, outputDir);
+                FileOutputStream stream = new FileOutputStream(tempFile);
+                if(mMediaUri != null && mRequestType != -1) {
+                    if (mOrientation == -1) {
+                        mOrientation = getImageOrientation(mRequestType, mMediaUri);
+                        mPix = Rotate.rotate(mPix, mOrientation);
+                    }
+                    Bitmap bmp = WriteFile.writeBitmap(mPix);
+                    bmp.compress(Bitmap.CompressFormat.PNG, 100, stream);
+                    stream.close();
+                    bmp.recycle();
+                    savedInstanceState.putString("image", tempFile.getAbsolutePath());
+                }
+            } catch (IOException e) {
+                Log.e(TAG, "Couldn't save temp file");
+                e.printStackTrace();
+            }
+        }
+        super.onSaveInstanceState(savedInstanceState);
+    }
+
+    @Override
+    public void onRestoreInstanceState(Bundle savedInstanceState) {
+        super.onRestoreInstanceState(savedInstanceState);
+
+        String path = savedInstanceState.getString("image");
+        if(!path.isEmpty()) {
+            FileInputStream stream = null;
+            try {
+                stream = this.openFileInput(path);
+                Bitmap bmp = BitmapFactory.decodeStream(stream);
+                stream.close();
+                if(bmp != null && mThumbnail != null) {
+                    mThumbnail.setImageBitmap(bmp);
+                    mThumbnail.invalidate();
+                }
+            } catch (FileNotFoundException e) {
+                e.printStackTrace();
+            } catch (IOException e) {
+                e.printStackTrace();
+            }
+        } else {
+            Log.e(TAG, "Path is empty");
         }
     }
 }
