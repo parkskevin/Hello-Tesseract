@@ -1,11 +1,15 @@
 package com.kparks.hello_tesseract;
 
+import android.annotation.TargetApi;
+import android.content.ContentUris;
+import android.content.Context;
 import android.content.Intent;
 import android.database.Cursor;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
 import android.media.ExifInterface;
 import android.net.Uri;
+import android.os.Build;
 import android.os.Bundle;
 import android.os.Environment;
 import android.provider.DocumentsContract;
@@ -18,6 +22,7 @@ import android.view.Menu;
 import android.view.MenuItem;
 import android.widget.Button;
 import android.widget.ImageView;
+import android.widget.ProgressBar;
 import android.widget.Toast;
 
 import com.googlecode.leptonica.android.Pix;
@@ -40,13 +45,12 @@ public class MainActivity extends AppCompatActivity {
     public static final String TAG = MainActivity.class.getSimpleName();
     public static final String PREFIX = "HELLOTESS";
     public static final String EXTENSION = ".PNG";
-    public static final int TAKE_PHOTO_REQUEST = 0;
-    public static final int PICK_PHOTO_REQUEST = 1;
-    public static final int MEDIA_TYPE_IMAGE = 1;
     protected Uri mMediaUri;
+    protected String mFullMediaPath;
     protected Button mCaptureButton;
     protected Button mGalleryButton;
     protected ImageView mThumbnail;
+    protected ProgressBar mProgressBar;
     protected Pix mPix;
     protected int mOrientation;
     protected int mRequestType;
@@ -60,9 +64,14 @@ public class MainActivity extends AppCompatActivity {
         mCaptureButton = (Button) findViewById(R.id.button_captureImage);
         mGalleryButton = (Button) findViewById(R.id.button_galleryImage);
         mThumbnail = (ImageView) findViewById(R.id.imageView_thumbnail);
+        mProgressBar = (ProgressBar) findViewById(R.id.progressBar);
         mPix = null;
         mOrientation = -1;
         mRequestType = -1;
+
+        if(savedInstanceState == null) {
+            mProgressBar.setVisibility(View.INVISIBLE);
+        }
 
         mCaptureButton.setOnClickListener(new View.OnClickListener() {
             @Override
@@ -70,7 +79,7 @@ public class MainActivity extends AppCompatActivity {
                 //Take a photo using system camera
                 Intent takePhotoIntent = new Intent(MediaStore.ACTION_IMAGE_CAPTURE);
                 //Find a location to store the image
-                mMediaUri = getOutputMediaFileUri(MEDIA_TYPE_IMAGE);
+                mMediaUri = getOutputMediaFileUri(Constants.MEDIA_TYPE_IMAGE);
                 if(mMediaUri == null) {
                     //display an error
                     Toast.makeText(MainActivity.this, "Cannot save images", Toast.LENGTH_LONG).show();
@@ -79,7 +88,7 @@ public class MainActivity extends AppCompatActivity {
                     //Pass along the URI to use for saving
                     takePhotoIntent.putExtra(MediaStore.EXTRA_OUTPUT, mMediaUri);
                     //Start camera intent
-                    startActivityForResult(takePhotoIntent, TAKE_PHOTO_REQUEST);
+                    startActivityForResult(takePhotoIntent, Constants.TAKE_PHOTO_REQUEST);
                 }
             }
         });
@@ -90,7 +99,7 @@ public class MainActivity extends AppCompatActivity {
                 //Choose a photo from the gallery
                 Intent galleryPhotoIntent = new Intent(Intent.ACTION_GET_CONTENT);
                 galleryPhotoIntent.setType("image/*");
-                startActivityForResult(galleryPhotoIntent, PICK_PHOTO_REQUEST);
+                startActivityForResult(galleryPhotoIntent, Constants.PICK_PHOTO_REQUEST);
             }
         });
 
@@ -98,12 +107,13 @@ public class MainActivity extends AppCompatActivity {
         TessBaseAPI tessBaseAPI = new TessBaseAPI();
     }
 
+    @TargetApi(Build.VERSION_CODES.JELLY_BEAN)
     @Override
     protected void onActivityResult(int requestCode, int resultCode, Intent intent) {
         super.onActivityResult(requestCode, resultCode, intent);
         if (resultCode == RESULT_OK) {
             mRequestType = requestCode;
-            if (mRequestType == PICK_PHOTO_REQUEST) {
+            if (mRequestType == Constants.PICK_PHOTO_REQUEST) {
                 if (intent == null) {
                     Toast.makeText(this, "An error has occurred. Try again.", Toast.LENGTH_LONG).show();
                     return;
@@ -116,72 +126,20 @@ public class MainActivity extends AppCompatActivity {
                 mediaScanIntent.setData(mMediaUri);
                 sendBroadcast(mediaScanIntent);
             }
-            //Get the proper orientation of the image
-            try {
-                mOrientation = getImageOrientation(mRequestType, mMediaUri);
-            } catch (IOException e) {
-                Log.e(TAG, "Get orientation error!");
-                e.printStackTrace();
-            }
-
-            //Show the image using leptonica
-            try {
-                Bitmap bitmap = MediaStore.Images.Media.getBitmap(this.getContentResolver(), mMediaUri);
-                mPix = ReadFile.readBitmap(bitmap);
-                if (mPix == null) {
-                    Toast.makeText(this, "Error: Pix is null.", Toast.LENGTH_LONG).show();
-                    return;
-                } else {
-                    mPix = Rotate.rotate(mPix, mOrientation);
-                    mThumbnail.setImageBitmap(WriteFile.writeBitmap(mPix));
-                    mThumbnail.invalidate();
-                }
-            } catch (IOException e) {
-                e.printStackTrace();
-            }
+            //Get the bitmap data first & downsample it
+            Log.d(TAG, "MaxH: " + mThumbnail.getMaxHeight());
+            Log.d(TAG, "MaxW: " + mThumbnail.getMaxWidth());
+            loadBitmap(mMediaUri, mThumbnail, mRequestType, this);
         }
     }
 
-    private int getImageOrientation(int requestType, Uri mediaUri) throws IOException {
-        int orientation = -1;
-        Cursor cursor = null;
-        if(requestType == PICK_PHOTO_REQUEST) {
-            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.KITKAT) {
-                String wholeID = null;
-                wholeID = DocumentsContract.getDocumentId(mediaUri);
-                String id = wholeID.split(":")[1];
-                String column[] = {MediaStore.Images.Media.ORIENTATION};
-                String sel = MediaStore.Images.Media._ID + "=?";
-                cursor = this.getContentResolver().query(MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
-                        column, sel, new String[]{id}, null);
-                if (cursor != null && cursor.moveToFirst()) {
-                    orientation = cursor.getInt(cursor.getColumnIndex(column[0]));
-                }
-                if (cursor != null) {
-                    cursor.close();
-                }
-            }
-        } else {
-            ExifInterface exifInterface = new ExifInterface(mediaUri.getPath());
-            orientation = exifInterface.getAttributeInt(ExifInterface.TAG_ORIENTATION, ExifInterface.ORIENTATION_UNDEFINED);
-            switch(orientation) {
-                case ExifInterface.ORIENTATION_ROTATE_90:
-                    orientation = 90;
-                    break;
-                case ExifInterface.ORIENTATION_ROTATE_180:
-                    orientation = 180;
-                    break;
-                case ExifInterface.ORIENTATION_ROTATE_270:
-                    orientation = 270;
-                    break;
-                default:
-                    orientation = 0;
-                    break;
-            }
-        }
-        Log.d(TAG, "Orientation: " + mOrientation);
-        return orientation;
+    @TargetApi(Build.VERSION_CODES.JELLY_BEAN)
+    public void loadBitmap(Uri mediaUri, ImageView imageView, int requestType, Context context) {
+        BitmapWorkerTask task = new BitmapWorkerTask(imageView, mediaUri, requestType, context);
+        task.execute(mediaUri, requestType, mThumbnail.getMaxWidth(), mThumbnail.getMaxHeight());
     }
+
+
 
     @Override
     public boolean onCreateOptionsMenu(Menu menu) {
@@ -250,54 +208,56 @@ public class MainActivity extends AppCompatActivity {
         }
     }
 
-    @Override
-    public void onSaveInstanceState(Bundle savedInstanceState) {
-        if(mPix != null) {
-            File outputDir = this.getCacheDir();
-            try {
-                File tempFile = File.createTempFile(PREFIX, EXTENSION, outputDir);
-                FileOutputStream stream = new FileOutputStream(tempFile);
-                if(mMediaUri != null && mRequestType != -1) {
-                    if (mOrientation == -1) {
-                        mOrientation = getImageOrientation(mRequestType, mMediaUri);
-                        mPix = Rotate.rotate(mPix, mOrientation);
-                    }
-                    Bitmap bmp = WriteFile.writeBitmap(mPix);
-                    bmp.compress(Bitmap.CompressFormat.PNG, 100, stream);
-                    stream.close();
-                    bmp.recycle();
-                    savedInstanceState.putString("image", tempFile.getAbsolutePath());
-                }
-            } catch (IOException e) {
-                Log.e(TAG, "Couldn't save temp file");
-                e.printStackTrace();
-            }
-        }
-        super.onSaveInstanceState(savedInstanceState);
-    }
+//    @Override
+//    public void onSaveInstanceState(Bundle savedInstanceState) {
+//        if(mPix != null) {
+//            File outputDir = this.getCacheDir();
+//            try {
+//                File tempFile = File.createTempFile(PREFIX, EXTENSION, outputDir);
+//                FileOutputStream stream = new FileOutputStream(tempFile);
+//                if(mMediaUri != null && mRequestType != -1) {
+//                    if (mOrientation == -1) {
+//                        mOrientation = getImageOrientation(mRequestType, mMediaUri);
+//                        mPix = Rotate.rotate(mPix, mOrientation);
+//                    }
+//                    Bitmap bmp = WriteFile.writeBitmap(mPix);
+//                    bmp.compress(Bitmap.CompressFormat.PNG, 100, stream);
+//                    stream.close();
+//                    bmp.recycle();
+//                    savedInstanceState.putString("image", tempFile.getAbsolutePath());
+//                }
+//            } catch (IOException e) {
+//                Log.e(TAG, "Couldn't save temp file");
+//                e.printStackTrace();
+//            }
+//        }
+//        super.onSaveInstanceState(savedInstanceState);
+//    }
+//
+//    @Override
+//    public void onRestoreInstanceState(Bundle savedInstanceState) {
+//        super.onRestoreInstanceState(savedInstanceState);
+//
+//        String path = savedInstanceState.getString("image");
+//        if(!path.isEmpty()) {
+//            FileInputStream stream = null;
+//            try {
+//                stream = this.openFileInput(path);
+//                Bitmap bmp = BitmapFactory.decodeStream(stream);
+//                stream.close();
+//                if(bmp != null && mThumbnail != null) {
+//                    mThumbnail.setImageBitmap(bmp);
+//                    mThumbnail.invalidate();
+//                }
+//            } catch (FileNotFoundException e) {
+//                e.printStackTrace();
+//            } catch (IOException e) {
+//                e.printStackTrace();
+//            }
+//        } else {
+//            Log.e(TAG, "Path is empty");
+//        }
+//    }
 
-    @Override
-    public void onRestoreInstanceState(Bundle savedInstanceState) {
-        super.onRestoreInstanceState(savedInstanceState);
 
-        String path = savedInstanceState.getString("image");
-        if(!path.isEmpty()) {
-            FileInputStream stream = null;
-            try {
-                stream = this.openFileInput(path);
-                Bitmap bmp = BitmapFactory.decodeStream(stream);
-                stream.close();
-                if(bmp != null && mThumbnail != null) {
-                    mThumbnail.setImageBitmap(bmp);
-                    mThumbnail.invalidate();
-                }
-            } catch (FileNotFoundException e) {
-                e.printStackTrace();
-            } catch (IOException e) {
-                e.printStackTrace();
-            }
-        } else {
-            Log.e(TAG, "Path is empty");
-        }
-    }
 }

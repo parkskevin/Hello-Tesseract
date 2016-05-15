@@ -48,6 +48,16 @@
         android:id="@+id/imageView_thumbnail"
         android:layout_centerVertical="true"
         android:layout_centerHorizontal="true"
-        android:contentDescription="@string/thumbnail" />
+        android:contentDescription="@string/thumbnail"
+        android:maxHeight="512dp"
+        android:maxWidth="384dp" />
+
+    <ProgressBar
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:id="@+id/progressBar"
+        android:layout_centerVertical="true"
+        android:layout_centerHorizontal="true"
+        android:indeterminate="true" />
 
 </RelativeLayout>
